@@ -1,4 +1,6 @@
 extends Node2D
 
 func _ready():
-	print("aabb 测试");
+	var text_typer = TextTyper.new();
+	text_typer.text = "你好我的世界";
+	add_child(text_typer);

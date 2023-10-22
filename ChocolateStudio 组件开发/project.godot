@@ -15,10 +15,6 @@ run/main_scene="res://node_2d.tscn"
 config/features=PackedStringArray("4.1", "GL Compatibility")
 config/icon="res://icon.svg"
 
-[autoload]
-
-CameraManager="*res://Components/CameraManager/CameraManager.gd"
-
 [rendering]
 
 renderer/rendering_method="gl_compatibility"

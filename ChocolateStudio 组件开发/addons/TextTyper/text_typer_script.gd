@@ -1,0 +1,316 @@
+extends Control;
+class_name TextTyper;
+signal call_text_command(commandName:String,commandArray:Array[String],commandLength:int);             # 调用文本命令时会触发
+signal typer_paused;
+
+@export_multiline var text: String = "":                     # 打字文本
+	set(_value):
+		text_length = _value.length();
+		text = _value;
+		pass;
+@export_range(0, 2147483647, 1.0) var typer_speed:int = 4;   # 打字速度
+@export var paused: bool = false:                            # 是否暂停
+	set(_value):
+		paused = _value;
+		if (_value):
+			typer_paused.emit();
+@export var instant: bool = false;                           # 是否瞬间显示
+
+@export_group("Text Attributes")
+@export var text_font: Font = null;                           # 文本字体
+@export var text_fontSize: int = 20;                          # 文本字体大小
+@export var text_scale: Vector2 = Vector2.ONE;                # 文本的缩放属性
+@export var text_space: Vector2 = Vector2.ZERO;               # 文本行字间距
+@export var text_max_width: float = -1.0;                      # 文本行字间距
+@export var shadow: bool = false;
+@export var outline: bool = false;
+@export var voice: AudioStream = null;
+@export_group("Text Visibility/Color")
+@export var text_color: Color = Color.WHITE;                  # 文本颜色
+@export var text_shadow_color: Color = Color.WHITE;            # 文本阴影颜色
+@export var text_outline_color: Color = Color.WHITE;           # 文本描边颜色
+@export_group("Text Visibility/Constants")
+@export var shadow_offset: Vector2i = Vector2i.ONE;          # 文本阴影偏移
+@export var outline_size: int = 1.0;                         # 文本轮廓大小
+
+var typer_timer:int = 0;
+var text_length: int = 0;    # 字符串长度
+var char_cursor_position: Vector2 = Vector2.ZERO; # 打字位置
+var wait_timer: int = 0;      # 等待时间
+var typer_process_index: int = 0;   # 打字进度
+var typer_size: Vector2 = Vector2.ZERO;
+var char_nodes: Array[Control] = [];
+var lables_pool: Array[Label] = [];
+var texture_rect_pool: Array[TextureRect] = [];
+var audio_player_pool: Array[AudioStreamPlayer] = [];
+var audio_stream_playing_map = {};
+
+func CanProcess() -> bool :
+	return ((!paused || instant) && ((typer_process_index < text_length) && 
+			(wait_timer <= 0)));
+
+func PlaySound(_audio_stream: AudioStream) -> void :
+	if (_audio_stream == null) :
+		return;
+	if (audio_stream_playing_map.has(_audio_stream)):
+		return;
+	var _audio_player:AudioStreamPlayer;
+	if (audio_player_pool.is_empty()) :
+		_audio_player = AudioStreamPlayer.new();
+		self.add_child(_audio_player);
+	else :
+		_audio_player = audio_player_pool.pop_back();
+	_audio_player.finished.connect(func():
+		StopSound(_audio_player);
+	,4);
+	audio_stream_playing_map[_audio_stream] = _audio_player;
+	_audio_player.stream = _audio_stream;
+	_audio_player.play();
+	pass;
+# 播放音效
+
+func StopSound(_audio_player: AudioStreamPlayer) -> void :
+	audio_player_pool.push_back(_audio_player);
+	_audio_player.stop();
+	pass;
+# 暂停音效
+
+func CallTextCommand(_commands:Array[String]) -> void :
+	var _command_length:int = _commands.size() - 1;
+	if (_command_length < 0):
+		return;
+	var _command_name: String = _commands[0];
+	match(_command_name):
+		"Pause":
+			if (_command_length == 1):
+				paused = _commands[1] == "true";
+			else:
+				paused = !paused;
+		"Instant":
+			if (_command_length == 1):
+				instant = _commands[1] == "true";
+			else:
+				instant = !instant;
+		"Clear":
+			ClearLablels();
+		"Wait":
+			if (_command_length == 1):
+				wait_timer = int(_commands[1]);
+		"Sprite":
+			if (_command_length >= 1):
+				CreateNewTextureRectChar(load(_commands[1]));
+				
+		
+		"Sound":
+			if (_command_length == 1):
+				var _audioStream:AudioStream = load(_commands[1]);
+				if (_audioStream != null):
+					PlaySound(_audioStream);
+				pass;
+			pass;
+		"Voice":
+			if (_command_length == 1):
+				voice = load(_commands[1]);
+		
+		"MaxWidth":
+			if (_command_length == 1):
+				text_max_width = float(_commands[1]);
+			pass;
+		
+		"TextColor":
+			if (_command_length == 1 && _commands[1].substr(0, 1) == "#"):
+				text_color = Color(_commands[1]);
+			elif (_command_length >= 3):
+				text_color.r = int(_commands[1]);
+				text_color.g = int(_commands[2]);
+				text_color.b = int(_commands[3]);
+				if (_command_length == 4):
+					text_color.a = float(_commands[4]);
+		"TextSpace":
+			if (_command_length == 1):
+				var _val = int(_commands[1]);
+				text_space = Vector2i(_val, _val);
+			elif (_command_length == 2):
+				text_space = Vector2i(int(_commands[1]), int(_commands[2]));
+			pass;
+		"TextFont":
+			if (_command_length == 1 && FileAccess.file_exists(_commands[1])):
+				text_font = load(_commands[1]);
+		
+		"Outline":
+			if (_command_length == 1):
+				outline = _commands[1] == "true";
+			else :
+				outline = !outline;
+		"OutlineSize":
+			if (_command_length == 1):
+				outline_size = int(_commands[1]);
+		"OutlineColor":
+			if (_command_length == 1 && _commands[1].substr(0, 1) == "#"):
+				text_outline_color = Color(_commands[1]);
+			elif (_command_length >= 3):
+				text_outline_color.r = int(_commands[1]);
+				text_outline_color.g = int(_commands[2]);
+				text_outline_color.b = int(_commands[3]);
+				if (_command_length == 4):
+					text_outline_color.a = float(_commands[4]);
+		
+		"Shadow":
+			if (_command_length == 1):
+				shadow = _commands[1] == "true";
+			else :
+				shadow = !shadow;
+		"ShadowOffset":
+			if (_command_length == 2):
+				shadow_offset = Vector2(float(_commands[1]), float(_commands[2]));
+		"ShadowColor":
+			if (_command_length == 1 && _commands[1].substr(0, 1) == "#"):
+				text_shadow_color = Color(_commands[1]);
+			elif (_command_length >= 3):
+				text_shadow_color.r = int(_commands[1]);
+				text_shadow_color.g = int(_commands[2]);
+				text_shadow_color.b = int(_commands[3]);
+				if (_command_length == 4):
+					text_shadow_color.a = float(_commands[4]);
+		_:
+			pass;
+	call_text_command.emit(_command_name, _commands.slice(1), _command_length); # 发射信号
+	pass;
+# 执行文本命令
+
+func CreateNewTextureChar(_spritePath:String) -> void :
+	var _texture = load(_spritePath);
+	if (_texture == null):
+		return;
+	pass;
+func CreateNewChar(_charText:String) -> void :
+	if (_charText == ""):
+		return;
+	var _char_label:Label
+	if (lables_pool.is_empty()):
+		_char_label = Label.new();
+		char_nodes.push_back(_char_label);
+		self.add_child(_char_label);
+	else :
+		_char_label = lables_pool.pop_back();
+		_char_label.show();
+		char_nodes.push_back(_char_label);
+	if (voice is AudioStream):
+		PlaySound(voice);
+	
+	_char_label.text = _charText;
+	_char_label.scale = text_scale;
+	if (shadow) :
+		_char_label.add_theme_color_override("font_shadow_color", text_shadow_color);
+		_char_label.add_theme_constant_override("shadow_offset_x", shadow_offset.x);
+		_char_label.add_theme_constant_override("shadow_offset_y", shadow_offset.y);
+	if (outline) :
+		_char_label.add_theme_color_override("font_outline_color", text_outline_color);
+		_char_label.add_theme_constant_override("outline_size", outline_size);
+		pass;
+	_char_label.add_theme_color_override("font_color", text_color);
+	_char_label.add_theme_font_size_override("font_size", text_fontSize);
+	if (text_font != null):
+		_char_label.add_theme_font_override("font", text_font);
+	var _label_width: float = char_cursor_position.x + _char_label.get_rect().size.x;
+	if (text_max_width > 0 && _label_width >= text_max_width):
+		BreakLine();
+	_char_label.position = char_cursor_position;
+	typer_size.x = max(typer_size.x, _label_width);
+	char_cursor_position.x += _char_label.get_rect().size.x + text_space.x;
+	typer_size.y = max(typer_size.y, char_cursor_position.y + 
+			_char_label.get_rect().size.y);
+	pass;
+# 创建一个新字符Label节点在末尾
+
+func CreateNewTextureRectChar(_texture:Texture) -> void :
+	if (_texture == null):
+		return;
+	var _char_node:TextureRect;
+	if (lables_pool.is_empty()):
+		_char_node = TextureRect.new();
+		char_nodes.push_back(_char_node);
+		self.add_child(_char_node);
+	else :
+		_char_node = texture_rect_pool.pop_back();
+		_char_node.show();
+		char_nodes.push_back(_char_node);
+	if (voice is AudioStream):
+		PlaySound(voice);
+	_char_node.texture = _texture;
+	var _char_node_width: float = char_cursor_position.x + _char_node.get_rect().size.x;
+	if (text_max_width > 0 && _char_node_width >= text_max_width):
+		BreakLine();
+	_char_node.position = char_cursor_position;
+	typer_size.x = max(typer_size.x, _char_node_width);
+	char_cursor_position.x += _char_node.get_rect().size.x + text_space.x;
+	typer_size.y = max(typer_size.y, char_cursor_position.y + _char_node.get_rect().size.y);
+	pass;
+# 创建一个新TextureRect节点在末尾
+
+func BreakLine() -> void :
+	char_cursor_position.x = 0;
+	char_cursor_position.y = typer_size.y + text_space.y;
+	pass;
+# 换行方法
+
+func ClearLablels() -> void:
+	for _char in char_nodes:
+		if (_char is Label):
+			lables_pool.push_back(_char);
+		elif (_char is TextureRect):
+			texture_rect_pool.push_back(_char);
+			pass;
+		_char.hide();
+	char_nodes.clear();
+	char_cursor_position = Vector2.ZERO;
+	typer_size = Vector2.ZERO;
+	pass; # 清除所有 Label 字符节点 (将所有字符节点取消显示并压入节点池)
+
+func _init():
+	text_length = text.length();
+	pass;
+
+func _process(delta):
+	if (paused || (typer_process_index >= text_length)) :
+		return;
+	if (wait_timer > 0) :
+		wait_timer -= 1;
+		return;
+	if (typer_timer >= typer_speed):
+		typer_timer = 0;
+		var _char: String;
+		while (true) :
+			_char = text.substr(typer_process_index, 1);
+			if (_char == "\r" || _char == "\n"):
+				BreakLine();
+				typer_process_index += 1;
+				continue;
+			elif (CanProcess()) :
+				if (_char == "{") :
+					var _cmd_string: String = "";
+					var _cmd_array: Array[String] = [];
+					while (CanProcess() || _char != "}") :
+						typer_process_index += 1;
+						_char = text.substr(typer_process_index, 1);
+						if (_char == "}"):
+							_cmd_array.push_back(_cmd_string);
+							typer_process_index += 1;
+							break;
+						elif (_char == " ") :
+							_cmd_array.push_back(_cmd_string);
+							_cmd_string = "";
+						else :
+							_cmd_string += _char;
+					CallTextCommand(_cmd_array);
+					continue;
+				else :
+					CreateNewChar(_char);
+					typer_process_index += 1;
+			if ((paused || !instant) || ((typer_process_index == text_length) || (wait_timer > 0))) :
+				break;
+		audio_stream_playing_map.clear();
+		pass;
+	typer_timer += 1;
+	pass;
+

@@ -2,7 +2,7 @@ extends Control;
 class_name TextTyper;
 signal call_text_command(commandName:String,commandArray:Array[String],commandLength:int);             # 调用文本命令时会触发
 signal typer_paused;
-# 你好
+# 你好1
 @export_multiline var text: String = "":                     # 打字文本
 	set(_value):
 		text_length = _value.length();
